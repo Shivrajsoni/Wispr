@@ -204,7 +204,11 @@ fn run_daemon(cfg: Config, show_hud: bool, dry_run: bool) -> Result<()> {
     if let Err(e) = daemon.prepare_mic() {
         wispr::warn!("microphone not ready yet ({e:#}); will retry on the first dictation");
     }
-    info!("{ready}");
+    // Without permissions the hotkey is dead, so don't claim to be ready: the daemon logs what
+    // is missing instead, and restarts itself (logging "ready") once both are granted.
+    if macos::permissions_granted() {
+        info!("{ready}");
+    }
     if std::io::stdin().is_terminal() {
         info!("terminal: Enter toggles recording, q + Enter quits");
     }
