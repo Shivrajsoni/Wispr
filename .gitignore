@@ -1,0 +1,13 @@
+/target
+
+# Secrets and personal settings
+.env
+.env.*
+!.env.example
+/config.toml
+
+# Downloaded models (fetch with `wispr --download-models`)
+/models/*.bin
+/models/*.part
+
+.DS_Store

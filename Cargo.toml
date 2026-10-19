@@ -1,0 +1,44 @@
+[package]
+name = "wispr"
+version = "0.2.0"
+edition = "2024"
+description = "Hotkey-to-text dictation for macOS: speak, and polished text lands in the focused app."
+license = "MIT"
+readme = "README.md"
+build = "build.rs"
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "wispr"
+path = "src/main.rs"
+
+[dependencies]
+# Audio capture and the lock-free SPSC ring between the CoreAudio thread and the control thread
+cpal = "0.18.2"
+ringbuf = "0.4"
+
+# Speech-to-text: Deepgram streaming (primary) and whisper.cpp on Metal (offline fallback)
+tungstenite = { version = "0.30", features = ["native-tls"] }
+whisper-rs = { version = "0.13", features = ["metal"] }
+
+# Config and wire formats
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+toml = "0.8"
+anyhow = "1.0"
+
+# OS integration: global hotkey, keystrokes, focused app, pasteboard
+rdev = "0.5"
+enigo = "0.2"
+active-win-pos-rs = "0.9"
+objc2 = "0.6"
+objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSString", "NSArray", "NSData", "NSEnumerator"] }
+objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSPasteboard", "NSPasteboardItem"] }
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+strip = true

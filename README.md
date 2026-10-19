@@ -1,58 +1,151 @@
-# Wispr
+<h1 align="center">Wispr</h1>
 
-**Tap `Fn`, speak, and clean text appears wherever you're typing.**
-A fast, private, open-source take on Wispr Flow for macOS, written in Rust.
+<p align="center">
+  <b>Tap <code>Fn</code>, speak, and clean text appears wherever you're typing.</b><br>
+  A fast, private, open-source take on Wispr Flow for macOS, written in Rust.
+</p>
 
-- **Fast**: about 0.4 s from stopping to text on screen.
-- **Works offline**: if the internet or Deepgram is down, a local model on your Mac takes over.
-- **Clean text**: drops "um" and "uh", fixes "four, no actually five" → "five", formats per app.
-- **Never answers back**: it types what you said. A question stays a question.
-- **History in Obsidian**: your last 50 dictations, each with a Copy button.
+<p align="center">
+  <img alt="Platform: macOS 13+ on Apple Silicon" src="https://img.shields.io/badge/platform-macOS%2013%2B%20%C2%B7%20Apple%20Silicon-black">
+  <img alt="Language: Rust 2024" src="https://img.shields.io/badge/rust-2024%20edition-orange">
+  <img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-blue">
+  <img alt="Tests: 74 passing" src="https://img.shields.io/badge/tests-74%20passing-brightgreen">
+</p>
+
+<p align="center">
+  <img src="docs/overlay.png" width="520" alt="The on-screen indicator: listening with a live waveform and timer, transcribing, an info notice, and two warnings">
+</p>
 
 ---
 
-## 1. Install (5 minutes)
+## Contents
 
-You need macOS on Apple Silicon, [Rust](https://rustup.rs), Xcode tools
-(`xcode-select --install`), and CMake (`brew install cmake`).
+- [Why Wispr](#why-wispr)
+- [Requirements](#requirements)
+- [Install](#install)
+- [Usage](#usage)
+- [Running in the background](#running-in-the-background)
+- [How it works](#how-it-works)
+- [Offline and failure handling](#offline-and-failure-handling)
+- [History in Obsidian](#history-in-obsidian)
+- [Configuration](#configuration)
+- [Command-line reference](#command-line-reference)
+- [Performance](#performance)
+- [Privacy](#privacy)
+- [Troubleshooting](#troubleshooting)
+- [Development](#development)
+- [Contributing](#contributing)
+- [Uninstall](#uninstall)
+- [License and acknowledgments](#license-and-acknowledgments)
+
+---
+
+## Why Wispr
+
+- **Fast.** About 0.4 s from the moment you stop talking to text on screen. Audio streams to
+  Deepgram *while* you speak, so the transcript is nearly done when you finish.
+- **Works offline.** If the internet or Deepgram is down, Whisper runs on your Mac's GPU
+  and takes over with the same audio. A dictation is never lost.
+- **Clean text.** It drops "um" and "uh", and resolves self-corrections
+  ("four, no actually five" becomes "five"). It also fixes the words you teach it and
+  formats per app.
+- **Never answers back.** Clean-up is plain rules, not an AI model. It types what you said, and a
+  question stays a question.
+- **Stays out of the way.** No Dock icon and no window, and it never takes focus. It uses 0% CPU
+  when idle, and the mic is on only while you dictate.
+- **History in Obsidian.** Your last 50 dictations live in a note, each with its own Copy button.
+
+## Requirements
+
+| Need | Notes |
+|---|---|
+| macOS 13 or later on Apple Silicon | Whisper runs on the GPU through Metal |
+| [Rust](https://rustup.rs) (stable, 2024 edition) | Builds the daemon |
+| Xcode command line tools | `xcode-select --install`. Provides `swiftc` for the on-screen indicator |
+| CMake | `brew install cmake`. Builds whisper.cpp |
+| Deepgram API key *(optional)* | For the fast cloud engine. New accounts get $200 of free credit. Without a key, Wispr runs fully local |
+
+## Install
 
 ```bash
 git clone <this repo> && cd wispr
-cp .env.example .env                  # paste your key: DEEPGRAM_API_KEY=...  (optional)
-cargo run --release -- --download-models    # offline model, 190 MB
+cp .env.example .env                        # optional: DEEPGRAM_API_KEY=...
+cargo run --release -- --download-models    # offline Whisper model, 190 MB
 scripts/wisprctl install --raycast-dir ~/path/to/raycast/scripts
 ```
 
-That builds **Wispr.app**, starts it now and at every login, and adds Raycast commands.
+`wisprctl install` builds **Wispr.app** into `~/Applications`, then registers it to start now and
+at every login. It also copies your key and model, and adds the Raycast commands. Leave out
+`--raycast-dir` if you don't use Raycast.
 
-**Then allow two permissions** when macOS asks, or go to System Settings → Privacy & Security:
-- **Accessibility**: lets Wispr type into apps
-- **Input Monitoring**: lets Wispr see the `Fn` key
+**1. Allow two permissions** when macOS asks, or in System Settings → Privacy & Security:
 
-Wispr restarts itself once both are on. The first dictation also asks for **Microphone** access.
+| Permission | Why |
+|---|---|
+| **Accessibility** | Lets Wispr paste or type into the focused app |
+| **Input Monitoring** | Lets Wispr see the `Fn` key system-wide |
+| **Microphone** | Asked on your first dictation |
 
-**One keyboard setting:** System Settings → Keyboard → *Press 🌐 key to* → **Do Nothing**.
-Otherwise macOS opens emoji or its own dictation at the same time.
+Wispr restarts itself once Accessibility and Input Monitoring are both on.
 
----
+**2. Change one keyboard setting:** System Settings → Keyboard → *Press 🌐 key to* →
+**Do Nothing**. Otherwise macOS also opens the emoji picker or its own dictation.
 
-## 2. Use it
+**3. Check it:** run `wisprctl status` or Raycast's *Wispr Status*. You should see
+`Wispr: running` and `ready: Fn ...`.
+
+## Usage
 
 | Do this | Result |
 |---|---|
-| Tap `Fn`, speak, tap `Fn` again | Text is typed where your cursor is |
-| `Esc` while speaking | Cancel |
+| Tap `Fn`, speak, tap `Fn` again | The text is typed where your cursor is |
+| `Esc` while speaking or transcribing | Cancels the dictation. The key still reaches your app |
 | `Fn` + another key (Fn+Delete, Fn+←) | Treated as a shortcut, not a dictation |
 
-A small pill at the bottom of the screen shows **Listening** → **Transcribing**.
-Prefer push-to-talk (hold `Fn`, release to type)? Set `mode = "hold"` in the config.
+Prefer push-to-talk? Set `mode = "hold"`. Then you hold `Fn` to talk and release it to insert.
 
-**Raycast commands:** *Start Wispr*, *Stop Wispr*, *Wispr Status*.
-Terminal: `wisprctl start | stop | restart | status | logs | config | uninstall`.
+### The on-screen indicator
 
----
+A small frosted pill sits above the Dock. It never takes focus and ignores the mouse.
 
-## 3. How it works
+| State | What you see |
+|---|---|
+| Listening | Red recording dot, a waveform that follows your voice, and the elapsed time |
+| Transcribing | The pill shrinks to the bars, which ripple until the text arrives |
+| Info | Gray ⓘ and a short message, for example "Offline: using local model" (2.5 s) |
+| Problem | Amber ⚠ and what to do, for example "Microphone is silent: check permissions" (4 s) |
+
+The pill respects *Reduce motion*. Turn it off with `--no-hud`.
+
+## Running in the background
+
+Wispr runs as a per-user launchd agent (`local.wispr.dictation`). It has no Dock or menu-bar
+icon. You control it with `wisprctl` or Raycast.
+
+| Command | Raycast | What it does |
+|---|---|---|
+| `wisprctl start` | *Start Wispr* | Starts it now |
+| `wisprctl stop` | *Stop Wispr* | Stops it until you start it again or log in again |
+| `wisprctl restart` | | Stop, then start (use this after editing the config) |
+| `wisprctl toggle` | | Start if stopped, stop if running |
+| `wisprctl status` | *Wispr Status* | Shows running state, memory, engine, last dictation, and recent problems |
+| `wisprctl logs [-f]` | | Shows (or follows) `~/Library/Logs/wispr.log` |
+| `wisprctl config` | | Opens the live config file |
+| `wisprctl permissions` | | Opens the two Privacy panes Wispr needs |
+| `wisprctl uninstall [--purge]` | | Removes the app and the login item (see [Uninstall](#uninstall)) |
+
+- **At login:** Wispr starts by itself. You don't need Raycast for this.
+- **After a crash:** launchd restarts it. A clean exit or a config error does not trigger a
+  restart loop.
+
+`wisprctl` installs itself to `~/Library/Application Support/wispr/wisprctl`. To type just
+`wisprctl`, add this alias to `~/.zshrc`:
+
+```bash
+alias wisprctl="$HOME/Library/Application\ Support/wispr/wisprctl"
+```
+
+## How it works
 
 ```
  Fn key ─▶ microphone ─▶ 16 kHz audio (kept in RAM) ─┬─▶ Deepgram (cloud, streams while you talk)
@@ -68,56 +161,46 @@ Terminal: `wisprctl start | stop | restart | status | logs | config | uninstall`
                          add to the history note in Obsidian
 ```
 
-**Step by step**
+1. **Hotkey.** Wispr listens for `Fn` system-wide. `Fn` combined with another key counts as a
+   shortcut, so it doesn't start a dictation.
+2. **Microphone.** The mic is prepared at startup, so recording begins within about 50 ms. It
+   records only while you dictate, so the macOS mic indicator is off the rest of the time.
+3. **Speech to text.** Audio streams to **Deepgram** (`nova-3`) as you talk. At startup Wispr
+   probes the US and EU endpoints and picks the faster one. A copy of the audio stays in memory
+   for the offline fallback.
+4. **Clean-up.** Deterministic rules, no AI model, so your words are never rewritten or answered:
+   - Fillers are removed: "um, so let's go" becomes "So let's go".
+   - Corrections are resolved: "port 8080, wait no, port 3000" becomes "port 3000". The same
+     works with "scratch that" and "I mean".
+   - Your vocabulary is fixed: "cube netties" becomes "Kubernetes".
+   - Each app gets its own style. Terminals and one-line chat messages get no trailing period,
+     and terminals get no trailing space.
+5. **Typing.** Wispr saves your clipboard, pastes the text, and restores the clipboard, including
+   images and files. In a password field (secure input) it types nothing and leaves the text
+   on the clipboard.
+6. **History.** The text is added to your Obsidian note on a background thread.
 
-1. **Hotkey**: Wispr listens for `Fn` system-wide.
-2. **Microphone**: already prepared at startup, so recording begins within ~50 ms.
-   It only records while you dictate, so the mic indicator is off the rest of the time.
-3. **Speech to text**: audio streams to **Deepgram** while you talk, so when you stop, the
-   text is almost ready (~0.3 s). A copy of the audio stays in memory for the offline fallback.
-4. **Clean-up**: simple rules, no AI model, so your words are never rewritten or answered:
-   - fillers removed: "um, so let's go" → "So let's go"
-   - corrections resolved: "port 8080, wait no, port 3000" → "port 3000"
-   - your words fixed: "cube netties" → "Kubernetes"
-   - per app: no trailing period in terminals or one-line chat messages
-5. **Typing**: Wispr saves your clipboard, pastes the text, then puts your clipboard back
-   (images and files too). In password fields it types nothing and copies the text instead.
-6. **History**: the text is added to your Obsidian note.
+The control loop is a single thread that owns all state. The CoreAudio callback hands samples
+over through a lock-free ring buffer. The states are
+`Idle → Listening → Processing → Injecting` ([`src/pipeline.rs`](src/pipeline.rs)), and they are
+unit-tested on their own.
 
----
+## Offline and failure handling
 
-## 4. What happens when you're offline
+Wispr keeps your recording in memory until it is text, so **a dictation is never lost**. When
+Deepgram can't be used, the same audio goes to **Whisper**, which runs on your Mac's GPU.
 
-Wispr always keeps your recording in memory until it's turned into text, so **a dictation is never
-lost**. If Deepgram can't be used, the same audio goes to **Whisper**, a speech-to-text model
-running on your Mac's GPU.
+| Situation | What Wispr does |
+|---|---|
+| Deepgram still connecting when you stop talking | Sends the audio to Whisper straight away, without waiting for round trips |
+| Final transcript slower than `finalize_timeout_ms` (1.5 s) | Transcribes the same audio locally |
+| Network or Deepgram error | Turns on offline mode for 30 s. The time doubles on each failure, up to 5 min |
+| Deepgram rejects the API key | Offline mode for an hour, and the pill says so |
+| Offline period ends | The next dictation tries Deepgram again by itself |
 
-| When you stop speaking… | Wispr does | You wait |
-|---|---|---|
-| Deepgram is connected and working | uses Deepgram | ~0.4 s |
-| Deepgram is still connecting | uses Whisper right away | ~0.8 s |
-| No internet, or the API key is rejected | uses Whisper right away, switches to offline mode | ~0.8 s |
-| Deepgram is connected but too slow (> 1.5 s) | uses Whisper | up to 1.5 s extra, once |
+With `engine = "local"`, Wispr never sends audio off your Mac at all.
 
-**Offline mode** (a "circuit breaker"): after a failure, Wispr stops trying Deepgram for a while,
-so you don't pay the wait every time. It waits 30 s, then 1, 2, 4, up to 5 min while failures continue
-(1 hour for a bad key), then tries Deepgram again. One success switches back online. The pill
-says *"Offline: using local model"* when this happens.
-
-**Is the offline model an "embedding model"?** No. Embedding models turn text into numbers to
-compare meanings (used for search). Wispr's offline engine is **Whisper**, a speech recognition
-model: it turns the sound into a spectrogram, an *encoder* converts that into audio features, and a
-*decoder* writes the words one token at a time. Wispr uses `small.en` (English, 190 MB, 5-bit
-quantized), loaded into memory at startup and warmed up, so the first offline dictation is as fast
-as the rest. Silence is skipped before it reaches the model, because Whisper invents text like
-"Thank you." when fed silence.
-
-**Which Deepgram server?** `region = "auto"` tests the US and EU servers at startup and uses the
-closer one. (With `eu`, audio is processed in the EU.)
-
----
-
-## 5. History in Obsidian
+## History in Obsidian
 
 ```toml
 [history]
@@ -126,98 +209,207 @@ max_entries = 50
 open_obsidian = true
 ```
 
-- Newest first. Each entry shows the time, the app, and `offline` if Whisper was used.
-- **Every dictation is its own code block, so Obsidian shows a Copy button on each one.**
-- After 50 entries, the oldest one is removed automatically.
-- When Wispr starts and Obsidian isn't open, Wispr opens it **in the background** on this note.
+- Newest entries come first. Each one shows the time, the app, and `offline` if Whisper was used.
+- **Each dictation is its own code block, so Obsidian shows a Copy button on every entry.**
+- After 50 entries, the oldest is removed.
+- If Obsidian isn't running when Wispr starts, Wispr opens it **in the background** on this note.
 
-How it's done: the note is just a file. Obsidian notices file changes instantly, so no plugin is
-needed. Wispr writes the file on a separate thread, so it never slows down typing, and replaces it
-in one atomic step, so Obsidian never sees a half-written note. A small CSS snippet
-(`.obsidian/snippets/wispr-history.css`) makes long dictations wrap. It only affects this note.
+The note is a plain file, so no plugin is needed: Obsidian picks up file changes instantly. Wispr
+writes it on a separate thread, so writing never slows down typing. It replaces the file in one
+atomic step, so Obsidian never sees a half-written note. A small CSS snippet
+(`.obsidian/snippets/wispr-history.css`) wraps long dictations, and only on this note.
 
----
+## Configuration
 
-## 6. Settings
-
-Your settings file: `~/Library/Application Support/wispr/config.toml` (open it with `wisprctl config`,
-then `wisprctl restart`). Every option is explained in [`config.example.toml`](config.example.toml).
+The live config is `~/Library/Application Support/wispr/config.toml`. Edit it with
+`wisprctl config`, then run `wisprctl restart`. Every option is documented in
+[`config.example.toml`](config.example.toml). Every setting is optional.
 
 | Setting | What it does | Default |
 |---|---|---|
-| `hotkey.key` | `Fn`, `RightOption`, `RightCommand`, `F1`–`F12`, … | `Fn` |
-| `hotkey.mode` | `toggle` (tap to start/stop) or `hold` (push-to-talk) | `toggle` |
+| `hotkey.key` | `Fn`, `RightOption`, `RightCommand`, `RightControl`, `RightShift`, `LeftOption`, `CapsLock`, `F1`–`F12` | `Fn` |
+| `hotkey.mode` | `toggle` (tap to start and stop) or `hold` (push-to-talk) | `toggle` |
+| `hotkey.cancel_key` | Cancels the current dictation | `Escape` |
 | `transcription.engine` | `auto`, `deepgram`, or `local` (audio never leaves your Mac) | `auto` |
-| `deepgram.region` | `auto`, `us`, `eu` | `auto` |
-| `local.fallback` | keep Whisper loaded for offline use (~300 MB of memory) | `true` |
+| `transcription.max_recording_seconds` | Stops and transcribes after this long | `300` |
+| `deepgram.region` | `auto`, `us`, `eu` (audio processed in the EU) | `auto` |
+| `deepgram.finalize_timeout_ms` | Longest wait for Deepgram before using Whisper | `1500` |
+| `deepgram.spoken_punctuation` | Turns spoken "comma" and "new paragraph" into punctuation | `false` |
+| `local.model_path` | Whisper model file | `models/ggml-small.en-q5_1.bin` |
+| `local.fallback` | Keeps Whisper loaded for offline use (about 250 MB of memory) | `true` |
+| `audio.device` | Input device name from `wispr --list-devices`. Empty means the system default | `""` |
+| `audio.keep_warm_seconds` | Keeps the mic open after a dictation, for an instant next start | `0` |
 | `output.method` | `paste` (fast) or `type` (never touches the clipboard) | `paste` |
-| `history.path` | Obsidian note for your history; empty turns it off | off |
-| `[vocabulary]` | `"Kubernetes" = ["cube netties"]`: also helps Deepgram hear these words | — |
+| `output.trailing_space` | Adds a space between consecutive dictations (not in terminals) | `true` |
+| `output.resolve_corrections` | Applies "no actually", "wait no", "scratch that" | `true` |
+| `output.casual_chat` | Drops the trailing period in Slack, Discord, Messages | `true` |
+| `history.path` | Obsidian note for your history. Empty turns it off | `""` |
+| `[vocabulary]` | Canonical spelling and what gets misheard. Also boosts Deepgram recognition | — |
 
-The Deepgram key lives in `~/Library/Application Support/wispr/.env` (`DEEPGRAM_API_KEY=...`).
-New Deepgram accounts get $200 of free credit.
+```toml
+[vocabulary]
+"Kubernetes" = ["cube netties", "cube nettys"]
+"PostgreSQL" = ["postgres q l", "post gres"]
+```
 
----
+The Deepgram key is never stored in the config. It goes in
+`~/Library/Application Support/wispr/.env` as `DEEPGRAM_API_KEY=...`, and `wisprctl install`
+sets that file to mode `600`.
 
-## 7. Speed (MacBook Air M3)
+## Command-line reference
+
+```
+wispr [--config <path>] [COMMAND]
+```
+
+| Command | What it does |
+|---|---|
+| *(none)* | Runs the dictation daemon |
+| `--check-hardware` | Checks the system, microphone, permissions, and engines |
+| `--list-devices` | Lists audio input devices |
+| `--download-models [NAME]` | Downloads a Whisper model: `small.en` (default), `base.en`, or `large-v3-turbo` |
+| `--benchmark` | Measures end-to-end latency with synthetic speech |
+| `--transcribe <file.wav>` | Prints the raw and formatted text for a WAV file |
+
+| Option | What it does |
+|---|---|
+| `--config <path>` | Uses this config file (default: `./config.toml`, then the Application Support one) |
+| `--no-hud` | Hides the on-screen indicator |
+| `--dry-run` | Logs transcripts instead of typing them into apps |
+
+| Environment variable | What it does |
+|---|---|
+| `DEEPGRAM_API_KEY` | Turns on Deepgram streaming. Also read from `.env` |
+| `WISPR_LOG_TEXT=1` | Includes dictated text in logs (release builds redact it by default) |
+
+## Performance
+
+Measured on a MacBook Air M3:
 
 | Step | Time |
 |---|---|
 | Press `Fn` → microphone recording | ~50 ms |
-| Connect to Deepgram | ~0.7 s, while you're still talking |
+| Connect to Deepgram | ~0.7 s, while you are still talking |
 | Stop → text from Deepgram | ~0.3–0.4 s |
 | Stop → text from Whisper (offline) | ~0.8 s |
 | Clean-up + paste | ~12 ms |
 | Idle CPU | 0% |
 
-Measure it yourself: `wispr --benchmark`.
+Measure your own machine with `wispr --benchmark`. Each dictation's timings are also logged, for
+example `release->text 310 ms (transcribe 214 ms, ...)`.
 
----
+## Privacy
 
-## 8. Privacy
+- Audio is kept **only in memory**. It is cleared at the start of each recording and never
+  written to disk.
+- With `engine = "local"`, audio never leaves your Mac. Otherwise it streams to Deepgram while
+  you speak.
+- Logs never contain what you said, only its length, unless you set `WISPR_LOG_TEXT=1`.
+- Dictated text is stored on disk only if you turn on the history note.
+- The on-screen indicator runs as a separate process. It never sees your text, only fixed
+  status messages and the mic's loudness level.
 
-- Audio is kept **only in memory** and never saved to disk.
-- With `engine = "local"`, audio never leaves your Mac. Otherwise it goes to Deepgram while you speak.
-- Logs never contain what you said (only its length).
-- Dictated text is saved only if you turn on the history note.
-
----
-
-## 9. Troubleshooting
+## Troubleshooting
 
 | Problem | Fix |
 |---|---|
-| Nothing happens when I press `Fn` | Run *Wispr Status*. Usually Accessibility or Input Monitoring is off |
-| Emoji picker opens with `Fn` | Keyboard → *Press 🌐 key to* → Do Nothing |
-| "Offline: using local model" | Internet or Deepgram is down; it switches back by itself |
+| Nothing happens when I press `Fn` | Run *Wispr Status*. Usually Accessibility or Input Monitoring is off. Run `wisprctl permissions` |
+| The emoji picker opens with `Fn` | Keyboard → *Press 🌐 key to* → Do Nothing |
+| "Microphone is silent: check permissions" | Allow Wispr under Privacy & Security → Microphone |
+| "Offline: using local model" | The internet or Deepgram is down. Wispr switches back by itself |
 | A word is always misheard | Add it to `[vocabulary]` |
-| Permissions asked again after an update | Normal after `wisprctl install` ships a new build; allow again |
+| Permissions are asked again after an update | Expected: a new build is a new binary to macOS. Allow it again. If Wispr is listed but doesn't respond, remove it with `−` and add `~/Applications/Wispr.app` back |
+| `wispr is already running` | Another copy is still running. Run `wisprctl stop`. If `pgrep -fl Wispr.app` still shows a copy, end it with `kill <pid>` |
+| Text goes to the clipboard instead of being typed | A password field had focus (secure input). Paste it yourself with ⌘V |
 
-Logs: `wisprctl logs`. Full check: `wispr --check-hardware`.
+Logs: `wisprctl logs -f`. Full self-check: `wispr --check-hardware`.
 
----
-
-## 10. For developers
+## Development
 
 ```bash
-cargo test                    # 74 tests
-cargo clippy --all-targets    # zero warnings
-wispr --dry-run               # log text instead of typing it
-WISPR_DEEPGRAM_HOST=offline.invalid wispr --dry-run   # simulate being offline
+cargo build --release          # also compiles the Swift overlay (needs swiftc)
+cargo test                     # 74 tests
+cargo clippy --all-targets     # keep it at zero warnings
+cargo fmt
+
+target/release/wispr --dry-run                                  # log text instead of typing
+WISPR_DEEPGRAM_HOST=offline.invalid target/release/wispr --dry-run   # simulate being offline
+scripts/e2e/run.sh             # end-to-end: real Fn events, real engines, real paste
+scripts/wisprctl install       # ship your build to the background service
 ```
 
-| File | What it does |
+The end-to-end suite speaks with `say` (fed in through `WISPR_TEST_AUDIO` instead of the mic).
+It posts real HID key events and checks the text that lands in a small sink app. The terminal
+needs Accessibility and Input Monitoring for this. The background service is paused while the
+suite runs.
+
+### Project layout
+
+| Path | What it does |
 |---|---|
+| `src/main.rs` | CLI, startup, single-instance lock, restart after permissions are granted |
 | `src/daemon.rs` | Main loop: records, picks Deepgram or Whisper, types the result |
-| `src/pipeline.rs` | The states: Idle → Listening → Processing → Injecting |
-| `src/hotkey.rs` | `Fn` detection, Fn-shortcut cancel |
-| `src/audio/` | Microphone (lock-free), resampling to 16 kHz |
+| `src/pipeline.rs` | The state machine: Idle → Listening → Processing → Injecting |
+| `src/hotkey.rs` | `Fn` detection and the Fn-shortcut cancel |
+| `src/audio/` | Microphone (lock-free ring), resampling to 16 kHz, WAV reading |
+| `src/vad.rs` | Silence and muted-mic detection |
 | `src/asr/deepgram.rs` | Deepgram streaming client |
 | `src/asr/breaker.rs` | Offline mode (circuit breaker) |
 | `src/asr/whisper.rs` | Local Whisper on the GPU |
-| `src/vad.rs` | Detects silence |
 | `src/text.rs` | Clean-up rules |
-| `src/inject.rs` | Paste and restore your clipboard |
+| `src/context.rs` | Detects the target app and its kind (terminal, chat, …). Reads no window titles |
+| `src/inject.rs` | Paste and clipboard restore, secure-input handling |
 | `src/history.rs`, `src/obsidian.rs` | The Obsidian history note |
-| `macos/overlay.swift` | The on-screen pill |
+| `src/hud.rs`, `macos/overlay.swift` | The on-screen pill and its stdin protocol |
 | `scripts/wisprctl`, `raycast/` | Background service and Raycast commands |
+| `scripts/e2e/` | End-to-end test harness |
+
+### Overlay protocol
+
+`wispr-overlay` is a separate Swift process. Wispr drives it with one command per line on stdin:
+
+| Command | Effect |
+|---|---|
+| `listening` | Shows the dot, the waveform, and the timer |
+| `level <rms>` | Microphone loudness. Sent about 30 times a second while listening |
+| `processing` | Shows the ripple animation |
+| `notice <text>` | Info message, hidden after 2.5 s |
+| `alert <text>` | Problem message, hidden after 4 s |
+| `hide` | Fades out |
+
+The overlay exits when its stdin closes. If it is missing or crashes, Wispr carries on without it.
+
+## Contributing
+
+Issues and pull requests are welcome. Before you open a PR:
+
+1. `cargo fmt`, `cargo clippy --all-targets` with zero warnings, and `cargo test` all pass.
+2. Behavior changes come with a test. State changes belong in `tests/pipeline_state.rs`, and
+   clean-up rules belong next to `src/text.rs`.
+3. For anything that touches typing, hotkeys, or audio, run `scripts/e2e/run.sh` too.
+4. Keep the privacy guarantees: never write audio to disk, never log dictated text by default,
+   and never send text to the overlay.
+5. Keep the hot path fast. Measure with `wispr --benchmark` before and after.
+
+When you report a bug, include `wisprctl status`, the output of `wispr --check-hardware`, and the
+relevant lines from `wisprctl logs`. Release logs never contain your dictated text.
+
+## Uninstall
+
+```bash
+wisprctl uninstall           # removes Wispr.app and the login item, keeps config, key, models
+wisprctl uninstall --purge   # also deletes ~/Library/Application Support/wispr
+```
+
+Your Obsidian history note is never deleted.
+
+## License and acknowledgments
+
+MIT, as declared in [`Cargo.toml`](Cargo.toml).
+
+Built on [whisper.cpp](https://github.com/ggerganov/whisper.cpp) (via
+[whisper-rs](https://github.com/tazz4843/whisper-rs)), [Deepgram](https://deepgram.com),
+[cpal](https://github.com/RustAudio/cpal), [ringbuf](https://github.com/agerasev/ringbuf),
+[rdev](https://github.com/Narsil/rdev), [enigo](https://github.com/enigo-rs/enigo), and
+[objc2](https://github.com/madsmtm/objc2). Inspired by Wispr Flow. This project is not affiliated
+with Wispr Flow.

@@ -1,0 +1,329 @@
+#!/usr/bin/env bash
+# wisprctl: install and control wispr as a background macOS service.
+#
+#   wisprctl install [--raycast-dir DIR]   build, install Wispr.app, start now and at every login
+#   wisprctl start | stop | restart | toggle
+#   wisprctl status                        running state, engine, recent problems
+#   wisprctl logs [-f]                     show (or follow) the log
+#   wisprctl config                        open the live config file
+#   wisprctl permissions                   open the Privacy settings panes wispr needs
+#   wisprctl uninstall [--purge]           remove the service and app (--purge: also config, key, models)
+#
+# Layout after install:
+#   ~/Applications/Wispr.app                      the daemon + overlay (no Dock icon)
+#   ~/Library/Application Support/wispr/          config.toml, .env (API key), models/, wisprctl
+#   ~/Library/LaunchAgents/local.wispr.dictation.plist
+#   ~/Library/Logs/wispr.log
+
+set -euo pipefail
+
+LABEL="local.wispr.dictation"
+APP="$HOME/Applications/Wispr.app"
+BIN="$APP/Contents/MacOS/wispr"
+SUPPORT="$HOME/Library/Application Support/wispr"
+PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
+LOG="$HOME/Library/Logs/wispr.log"
+DOMAIN="gui/$(id -u)"
+SERVICE="$DOMAIN/$LABEL"
+MAX_LOG_BYTES=$((5 * 1024 * 1024))
+
+die() { echo "wisprctl: $*" >&2; exit 1; }
+
+pid_of_service() {
+    { launchctl print "$SERVICE" 2>/dev/null || true; } | awk '/^\tpid = / { print $3; exit }'
+}
+
+is_loaded() { launchctl print "$SERVICE" >/dev/null 2>&1; }
+is_running() { [[ -n "$(pid_of_service)" ]]; }
+
+repo_root() {
+    local here
+    here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    [[ -f "$here/../Cargo.toml" ]] || die "install must be run from the wispr repository (scripts/wisprctl install)"
+    (cd "$here/.." && pwd)
+}
+
+# Lines from the current run that explain why wispr is not working.
+recent_problems() {
+    [[ -f "$LOG" ]] || return 0
+    awk '/wispr [0-9.]+ starting/ { buf = "" } /warning:|^error:/ { buf = buf $0 "\n" } END { printf "%s", buf }' "$LOG" | tail -n 3 || true
+}
+
+needs_permissions() {
+    recent_problems | grep -qiE "accessibility|hotkey could not be registered|permission"
+}
+
+copy_if_changed() {
+    # Only replace binaries that actually changed: macOS ties privacy grants to the exact binary,
+    # so rewriting an identical file would needlessly ask for permissions again.
+    if ! cmp -s "$1" "$2"; then
+        cp "$1" "$2"
+        return 0
+    fi
+    return 1
+}
+
+write_info_plist() {
+    local version="$1"
+    cat >"$APP/Contents/Info.plist" <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleIdentifier</key><string>$LABEL</string>
+    <key>CFBundleName</key><string>Wispr</string>
+    <key>CFBundleDisplayName</key><string>Wispr</string>
+    <key>CFBundleExecutable</key><string>wispr</string>
+    <key>CFBundlePackageType</key><string>APPL</string>
+    <key>CFBundleShortVersionString</key><string>$version</string>
+    <key>CFBundleVersion</key><string>$version</string>
+    <key>LSMinimumSystemVersion</key><string>13.0</string>
+    <key>LSUIElement</key><true/>
+    <key>NSMicrophoneUsageDescription</key>
+    <string>Wispr records only while you use the dictation hotkey, to turn your speech into text.</string>
+</dict>
+</plist>
+EOF
+}
+
+write_launch_agent() {
+    mkdir -p "$(dirname "$PLIST")" "$(dirname "$LOG")"
+    cat >"$PLIST" <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key><string>$LABEL</string>
+    <key>ProgramArguments</key><array><string>$BIN</string></array>
+    <key>WorkingDirectory</key><string>$SUPPORT</string>
+    <key>RunAtLoad</key><true/>
+    <!-- Restart after a crash, but not after a clean exit or a configuration/permission error,
+         which would just fail again in a loop. -->
+    <key>KeepAlive</key><dict><key>Crashed</key><true/></dict>
+    <key>ThrottleInterval</key><integer>5</integer>
+    <key>ProcessType</key><string>Interactive</string>
+    <key>LimitLoadToSessionType</key><string>Aqua</string>
+    <key>StandardOutPath</key><string>$LOG</string>
+    <key>StandardErrorPath</key><string>$LOG</string>
+</dict>
+</plist>
+EOF
+    plutil -lint -s "$PLIST" || die "generated launch agent is invalid"
+}
+
+cmd_install() {
+    local raycast_dir=""
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --raycast-dir) raycast_dir="${2:?--raycast-dir needs a directory}"; shift 2 ;;
+            *) die "unknown install option: $1" ;;
+        esac
+    done
+
+    local repo version
+    repo="$(repo_root)"
+    version="$(awk -F'"' '/^version *=/ { print $2; exit }' "$repo/Cargo.toml")"
+
+    echo "==> Building wispr $version (release)"
+    (cd "$repo" && cargo build --release --quiet)
+    [[ -x "$repo/target/release/wispr" ]] || die "build produced no wispr binary"
+    [[ -x "$repo/target/release/wispr-overlay" ]] || echo "    note: no overlay helper (swiftc missing); running without the on-screen indicator"
+
+    echo "==> Installing $APP"
+    mkdir -p "$APP/Contents/MacOS"
+    local changed=0
+    copy_if_changed "$repo/target/release/wispr" "$BIN" && changed=1
+    if [[ -x "$repo/target/release/wispr-overlay" ]]; then
+        copy_if_changed "$repo/target/release/wispr-overlay" "$APP/Contents/MacOS/wispr-overlay" && changed=1
+    fi
+    write_info_plist "$version"
+    if [[ $changed -eq 1 ]] || ! codesign --verify "$APP" >/dev/null 2>&1; then
+        codesign --force --deep --sign - --identifier "$LABEL" "$APP" >/dev/null 2>&1 \
+            || die "codesign failed"
+        [[ $changed -eq 1 ]] && echo "    binaries updated; macOS may ask you to re-approve permissions"
+    fi
+
+    echo "==> Setting up $SUPPORT"
+    mkdir -p "$SUPPORT/models"
+    if [[ ! -f "$SUPPORT/config.toml" ]]; then
+        if [[ -f "$repo/config.toml" ]]; then cp "$repo/config.toml" "$SUPPORT/config.toml"
+        else cp "$repo/config.example.toml" "$SUPPORT/config.toml"; fi
+        echo "    config: $SUPPORT/config.toml"
+    else
+        echo "    config: kept existing $SUPPORT/config.toml"
+    fi
+    if [[ ! -f "$SUPPORT/.env" && -f "$repo/.env" ]]; then
+        grep -E '^(export )?DEEPGRAM_API_KEY=' "$repo/.env" >"$SUPPORT/.env" || true
+    fi
+    if [[ -f "$SUPPORT/.env" ]]; then
+        chmod 600 "$SUPPORT/.env"
+        grep -qE '^(export )?DEEPGRAM_API_KEY=.+' "$SUPPORT/.env" && echo "    Deepgram key: installed" \
+            || echo "    Deepgram key: missing (local Whisper only)"
+    else
+        echo "    Deepgram key: none; add DEEPGRAM_API_KEY=... to $SUPPORT/.env for cloud speed"
+    fi
+    # Copy only the Whisper model the installed config actually uses.
+    local model_name model
+    model_name="$(awk -F'"' '/^[[:space:]]*model_path[[:space:]]*=/ { print $2; exit }' "$SUPPORT/config.toml")"
+    model_name="$(basename "${model_name:-ggml-small.en-q5_1.bin}")"
+    model="$repo/models/$model_name"
+    if [[ -f "$model" ]]; then
+        if ! cmp -s "$model" "$SUPPORT/models/$model_name"; then
+            echo "    copying model $model_name"
+            cp "$model" "$SUPPORT/models/"
+        fi
+    elif [[ ! -f "$SUPPORT/models/$model_name" ]]; then
+        echo "    no local model; downloading $model_name for offline fallback"
+        (cd "$SUPPORT" && "$repo/target/release/wispr" --config "$SUPPORT/config.toml" --download-models) \
+            || echo "    download failed; Wispr will work online-only"
+    fi
+    install -m 755 "$repo/scripts/wisprctl" "$SUPPORT/wisprctl"
+
+    if [[ -n "$raycast_dir" ]]; then
+        echo "==> Installing Raycast commands into $raycast_dir"
+        mkdir -p "$raycast_dir"
+        install -m 755 "$repo"/raycast/*.sh "$raycast_dir/"
+    fi
+
+    echo "==> Registering login service"
+    write_launch_agent
+    cmd_stop >/dev/null 2>&1 || true
+    cmd_start
+}
+
+cmd_start() {
+    [[ -f "$PLIST" ]] || die "not installed; run: scripts/wisprctl install"
+    [[ -x "$BIN" ]] || die "$BIN is missing; run: scripts/wisprctl install"
+    if [[ -f "$LOG" && $(stat -f%z "$LOG") -gt $MAX_LOG_BYTES ]]; then
+        tail -n 2000 "$LOG" >"$LOG.tmp" && mv "$LOG.tmp" "$LOG"
+    fi
+    if is_running; then
+        echo "Wispr is already running"
+        return 0
+    fi
+    # Only look at log output from this start, not from earlier runs.
+    local offset=0
+    [[ -f "$LOG" ]] && offset=$(stat -f%z "$LOG")
+    if is_loaded; then
+        launchctl kickstart "$SERVICE" >/dev/null 2>&1 || true
+    else
+        launchctl bootstrap "$DOMAIN" "$PLIST" 2>/dev/null || launchctl kickstart "$SERVICE" >/dev/null 2>&1 || true
+    fi
+    # Give it a moment to load engines and register the hotkey before reporting.
+    local i
+    for i in $(seq 1 40); do
+        sleep 0.2
+        if is_running; then
+            local fresh
+            fresh="$(tail -c +$((offset + 1)) "$LOG" 2>/dev/null || true)"
+            if grep -q "waiting for permissions" <<<"$fresh"; then
+                echo "Wispr is running: allow it in the Accessibility and Input Monitoring prompts, then it activates by itself"
+                return 0
+            fi
+            if grep -q "ready:" <<<"$fresh"; then
+                local key
+                key="$(awk -F'"' '/^[[:space:]]*key[[:space:]]*=/ { print $2; exit }' "$SUPPORT/config.toml" 2>/dev/null || true)"
+                echo "Wispr is running: press ${key:-Fn} to dictate"
+                return 0
+            fi
+        elif [[ $i -gt 5 ]]; then
+            break
+        fi
+    done
+    if is_running; then
+        echo "Wispr is starting"
+        return 0
+    fi
+    local why
+    why="$(recent_problems | tail -n 1 | sed 's/^\[wispr\] //')"
+    if needs_permissions; then
+        cmd_permissions >/dev/null
+        echo "Wispr needs permissions: enable Wispr under Accessibility and Input Monitoring, then start again"
+    else
+        echo "Wispr failed to start: ${why:-see wisprctl logs}"
+    fi
+    return 1
+}
+
+cmd_stop() {
+    if is_loaded; then
+        launchctl bootout "$SERVICE" 2>/dev/null || true
+        # bootout returns before the service is fully torn down; wait so a following start
+        # doesn't mistake the exiting process for a running one.
+        local i
+        for i in $(seq 1 50); do
+            is_loaded || break
+            sleep 0.1
+        done
+        echo "Wispr stopped (it will start again at login)"
+    else
+        echo "Wispr is not running"
+    fi
+}
+
+cmd_status() {
+    if [[ ! -f "$PLIST" ]]; then
+        echo "Wispr: not installed (run scripts/wisprctl install in the repo)"
+        return 1
+    fi
+    local pid
+    pid="$(pid_of_service)"
+    if [[ -n "$pid" ]]; then
+        local rss cpu
+        read -r rss cpu < <(ps -o rss=,%cpu= -p "$pid") || true
+        echo "Wispr: running (pid $pid, $((rss / 1024)) MB, ${cpu}% CPU)"
+    else
+        echo "Wispr: stopped"
+    fi
+    if [[ -f "$LOG" ]]; then
+        { grep -E "engine:|ready:" "$LOG" || true; } | tail -n 2 | sed 's/^\[wispr\] /  /'
+        local last
+        last="$({ grep -E -- "-> .* via " "$LOG" || true; } | tail -n 1 | sed -E 's/^\[wispr\] //; s/ \| [^|]*$//')"
+        if [[ -n "$last" ]]; then echo "  last dictation: $last"; fi
+    fi
+    local problems
+    problems="$(recent_problems)"
+    if [[ -n "$problems" ]]; then
+        echo "  recent problems:"
+        echo "$problems" | sed 's/^\[wispr\] /    /'
+    fi
+    echo "  config: $SUPPORT/config.toml"
+    echo "  log:    $LOG"
+}
+
+cmd_logs() {
+    [[ -f "$LOG" ]] || die "no log yet ($LOG)"
+    if [[ "${1:-}" == "-f" ]]; then tail -n 50 -f "$LOG"; else tail -n 50 "$LOG"; fi
+}
+
+cmd_permissions() {
+    open "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"
+    open "x-apple.systempreferences:com.apple.preference.security?Privacy_ListenEvent"
+    echo "Enable Wispr under Accessibility and Input Monitoring (use + and pick $APP if it is not listed), then: wisprctl restart"
+}
+
+cmd_uninstall() {
+    cmd_stop >/dev/null 2>&1 || true
+    rm -f "$PLIST"
+    rm -rf "$APP"
+    if [[ "${1:-}" == "--purge" ]]; then
+        rm -rf "$SUPPORT"
+        echo "Wispr removed, including config, API key, and models"
+    else
+        echo "Wispr removed (config, key, and models kept in $SUPPORT; use --purge to delete them)"
+    fi
+}
+
+case "${1:-}" in
+    install) shift; cmd_install "$@" ;;
+    start) cmd_start ;;
+    stop) cmd_stop ;;
+    restart) cmd_stop >/dev/null; cmd_start ;;
+    toggle) if is_running; then cmd_stop; else cmd_start; fi ;;
+    status) cmd_status ;;
+    logs) shift; cmd_logs "$@" ;;
+    config) open -t "$SUPPORT/config.toml" ;;
+    permissions) cmd_permissions ;;
+    uninstall) shift; cmd_uninstall "$@" ;;
+    *) sed -n '2,10p' "$0" | sed 's/^# \{0,1\}//'; exit 1 ;;
+esac

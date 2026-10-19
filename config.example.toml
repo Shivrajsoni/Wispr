@@ -1,0 +1,86 @@
+# Wispr configuration
+#
+# Copy to ./config.toml or ~/Library/Application Support/wispr/config.toml.
+# Every setting is optional; the values shown are the defaults.
+# The Deepgram API key does NOT go here: set DEEPGRAM_API_KEY in your environment or in .env.
+
+[hotkey]
+# Fn (the 🌐 key, like Wispr Flow), RightOption, RightCommand, RightControl, RightShift,
+# LeftOption, CapsLock, F1-F12. For Fn, set System Settings > Keyboard > "Press 🌐 key to" to
+# "Do Nothing" so macOS doesn't also open emoji or dictation. Fn+another key (Fn+Delete,
+# Fn+arrows) is treated as a shortcut and cancels.
+key = "Fn"
+# "toggle": tap to start, tap again to insert.  "hold": hold to talk, release to insert.
+mode = "toggle"
+# Abandons the current dictation. The key still reaches the focused app.
+cancel_key = "Escape"
+
+[transcription]
+# "auto": Deepgram when an API key is available, otherwise local Whisper.
+# "deepgram": require Deepgram.  "local": never send audio off this Mac.
+engine = "auto"
+language = "en"
+max_recording_seconds = 300
+
+[deepgram]
+model = "nova-3"
+# "auto" probes both endpoints at startup and picks the faster one.
+# "us" = api.deepgram.com, "eu" = api.eu.deepgram.com (audio processed in the EU).
+region = "auto"
+connect_timeout_ms = 3000
+# After you stop speaking, wait at most this long for Deepgram before using local Whisper.
+# Typical Deepgram finalization is 0.3-0.4 s; this only bounds the bad case.
+finalize_timeout_ms = 1500
+smart_format = true
+# Turn spoken "comma", "period", "new paragraph" into punctuation.
+spoken_punctuation = false
+
+[local]
+# Offline engine and fallback. Download with: wispr --download-models small.en
+# Relative paths resolve against this file's directory, then the working directory.
+model_path = "models/ggml-small.en-q5_1.bin"
+# Apple Silicon: match the number of performance cores (M1/M2/M3: 4, Pro/Max: 6-12).
+threads = 4
+# Keep Whisper loaded (~250 MB RAM) so dictation still works offline or if Deepgram fails.
+fallback = true
+
+[audio]
+# Input device name from `wispr --list-devices`; empty = system default.
+device = ""
+# Keep the mic open this many seconds after a dictation so the next one starts instantly.
+# 0 closes it immediately, so the orange mic indicator is only on while you speak.
+keep_warm_seconds = 0
+
+[output]
+# "paste": pasteboard + Cmd+V, then your clipboard is restored (fast, any length).
+# "type": synthesized keystrokes (never touches the clipboard, slower for long text).
+method = "paste"
+restore_clipboard = true
+# How long the target app gets to read the pasteboard before it is restored.
+restore_delay_ms = 250
+# Add a space after each dictation so consecutive dictations don't run together (not in terminals).
+trailing_space = true
+# "meet at four, no actually five" -> "meet at five"; also "wait no", "scratch that", "I mean".
+resolve_corrections = true
+# Drop the trailing period of one-sentence messages in Slack, Discord, Messages, etc.
+casual_chat = true
+
+[history]
+# Markdown note with your latest dictations, newest first, e.g. a note in your Obsidian vault
+# ("~/Documents/MyVault/Wispr Dictations.md"). Obsidian refreshes it live. Empty = off.
+# Note: unlike audio, these texts are then stored on disk.
+path = ""
+# When full, the oldest dictation is removed.
+max_entries = 50
+# If the note is inside an Obsidian vault, open it in Obsidian (in the background) when Wispr
+# starts. Each dictation gets its own code block, so Obsidian shows a Copy button on every entry.
+open_obsidian = true
+
+# Canonical spelling = [what you say / what gets misheard].
+# Keys are also sent to Deepgram as keyterms, which boosts recognition of these words.
+[vocabulary]
+"Kubernetes" = ["cube netties", "cube nettys"]
+"PostgreSQL" = ["postgres q l", "post gres"]
+"GraphQL" = ["graph q l", "graph ql"]
+"TypeScript" = ["type script"]
+"Neovim" = ["neo vim"]
