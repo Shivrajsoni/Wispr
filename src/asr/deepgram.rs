@@ -130,13 +130,17 @@ impl StreamingSession {
         let (result_tx, results) = mpsc::channel();
         let connected = Arc::new(AtomicBool::new(false));
         let flag = Arc::clone(&connected);
-        thread::Builder::new()
+        // If the OS can't create a thread, the receiver sees a disconnected channel and
+        // `try_result` reports a network failure, so the dictation falls back to Whisper.
+        let spawned = thread::Builder::new()
             .name("deepgram".into())
             .spawn(move || {
                 let outcome = run(&opts, &command_rx, &flag);
                 let _ = result_tx.send(outcome);
-            })
-            .expect("spawning the Deepgram session thread");
+            });
+        if let Err(e) = spawned {
+            crate::warn!("cannot start a Deepgram session thread: {e}");
+        }
         Self {
             commands,
             results,

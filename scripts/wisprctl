@@ -259,6 +259,23 @@ cmd_stop() {
     else
         echo "Wispr is not running"
     fi
+    kill_strays
+}
+
+# Copies started outside the service (e.g. Wispr.app opened from Finder or Spotlight) hold the
+# single-instance lock and keep running an old binary after an update, so stop them too.
+kill_strays() {
+    local pids
+    pids="$(pgrep -f "^$BIN\$" || true)"
+    [[ -z "$pids" ]] && return 0
+    echo "Stopping Wispr copies started outside the service: $(echo $pids)"
+    kill $pids 2>/dev/null || true
+    local i
+    for i in $(seq 1 30); do
+        pgrep -f "^$BIN\$" >/dev/null || return 0
+        sleep 0.1
+    done
+    kill -9 $(pgrep -f "^$BIN\$") 2>/dev/null || true
 }
 
 cmd_status() {

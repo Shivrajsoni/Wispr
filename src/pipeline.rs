@@ -40,6 +40,8 @@ pub enum Event {
     ForceStop,
     /// The microphone could not be opened.
     RecordingFailed,
+    /// Nothing but silence was heard for the configured timeout.
+    NoSpeechTimeout,
     TranscriptReady(String),
     TranscriptionFailed,
     Injected,
@@ -97,6 +99,9 @@ impl Machine {
             (Idle, e) if starts(&e) => (Listening, vec![StartRecording, ShowListening]),
             (Listening, Event::Cancel) => (Idle, vec![DiscardRecording, Hide]),
             (Listening, Event::RecordingFailed) => (Idle, vec![Alert("Microphone unavailable")]),
+            (Listening, Event::NoSpeechTimeout) => {
+                (Idle, vec![DiscardRecording, Alert("No speech detected")])
+            }
             (Listening, e) if stops(&e, self.mode) => {
                 (Processing, vec![StopRecording, ShowProcessing])
             }

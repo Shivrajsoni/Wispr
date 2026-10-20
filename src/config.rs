@@ -164,7 +164,7 @@ impl Default for LocalConfig {
     }
 }
 
-#[derive(Debug, Clone, Default, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct AudioConfig {
     /// Input device name (see `wispr --list-devices`). Empty means the system default.
@@ -172,6 +172,19 @@ pub struct AudioConfig {
     /// Keep the microphone open this long after a dictation so back-to-back dictations
     /// start instantly. 0 closes it immediately (the mic indicator turns off right away).
     pub keep_warm_seconds: u64,
+    /// Cancel a dictation when no speech is heard for this many seconds after it starts.
+    /// 0 disables the timeout.
+    pub no_speech_timeout_seconds: u64,
+}
+
+impl Default for AudioConfig {
+    fn default() -> Self {
+        Self {
+            device: String::new(),
+            keep_warm_seconds: 0,
+            no_speech_timeout_seconds: 6,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]

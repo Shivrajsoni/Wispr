@@ -50,6 +50,9 @@ device = ""
 # Keep the mic open this many seconds after a dictation so the next one starts instantly.
 # 0 closes it immediately, so the orange mic indicator is only on while you speak.
 keep_warm_seconds = 0
+# Cancel with a "No speech detected" alert if nothing is said this many seconds after starting.
+# 0 disables it.
+no_speech_timeout_seconds = 6
 
 [output]
 # "paste": pasteboard + Cmd+V, then your clipboard is restored (fast, any length).

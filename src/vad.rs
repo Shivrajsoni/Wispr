@@ -41,6 +41,48 @@ pub fn speech_bounds(samples: &[f32]) -> Option<(usize, usize)> {
     Some((start, end))
 }
 
+/// Incremental speech detector for a live recording. Tracks the quietest frame seen so far as
+/// the noise floor and reports once enough voiced frames have been heard.
+pub struct SpeechWatch {
+    pending: Vec<f32>,
+    floor: f32,
+    voiced: usize,
+}
+
+impl SpeechWatch {
+    pub fn new() -> Self {
+        Self {
+            pending: Vec::new(),
+            floor: f32::MAX,
+            voiced: 0,
+        }
+    }
+
+    pub fn feed(&mut self, samples: &[f32]) {
+        self.pending.extend_from_slice(samples);
+        let whole = self.pending.len() / FRAME * FRAME;
+        for frame in self.pending[..whole].chunks(FRAME) {
+            let energy = rms(frame);
+            self.floor = self.floor.min(energy);
+            let threshold = (self.floor * FLOOR_MULTIPLIER).clamp(MIN_THRESHOLD, MAX_THRESHOLD);
+            if energy > threshold {
+                self.voiced += 1;
+            }
+        }
+        self.pending.drain(..whole);
+    }
+
+    pub fn heard(&self) -> bool {
+        self.voiced >= MIN_SPEECH_FRAMES
+    }
+}
+
+impl Default for SpeechWatch {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// True when at least one second of audio is exactly zero: a muted input or a denied mic
 /// permission (macOS delivers silence rather than an error in that case).
 pub fn is_digital_silence(samples: &[f32]) -> bool {
@@ -105,6 +147,17 @@ mod tests {
         let mut audio = vec![0.0; RATE];
         audio[8_000..8_100].fill(0.5);
         assert_eq!(speech_bounds(&audio), None);
+    }
+
+    #[test]
+    fn watch_ignores_silence_and_hears_speech() {
+        let mut w = SpeechWatch::new();
+        w.feed(&noise(RATE * 3, 0.004, 5));
+        assert!(!w.heard());
+        let mut w = SpeechWatch::new();
+        w.feed(&noise(RATE, 0.002, 6));
+        w.feed(&voice(RATE / 2));
+        assert!(w.heard());
     }
 
     #[test]

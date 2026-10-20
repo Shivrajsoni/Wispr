@@ -56,6 +56,22 @@ pub enum Signal {
 const STREAM_CHUNK_BYTES: usize = 3_200;
 const BUSY_POLL: Duration = Duration::from_millis(5);
 const IDLE_POLL: Duration = Duration::from_secs(1);
+const PERMISSION_PROBE_INTERVAL: Duration = Duration::from_secs(2);
+
+/// macOS caches the Input Monitoring answer for the lifetime of a process, so a permission
+/// granted while Wispr runs is invisible to Wispr itself. A short-lived child process
+/// (`--permission-probe`) gets a fresh answer under the same app identity. It is spawned and
+/// polled, never waited on, because process launch takes ~0.7 s.
+fn spawn_permission_probe() -> Option<std::process::Child> {
+    let exe = std::env::current_exe().ok()?;
+    std::process::Command::new(exe)
+        .arg("--permission-probe")
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .ok()
+}
 
 pub struct Engines {
     pub deepgram: Option<DeepgramOptions>,
@@ -166,6 +182,7 @@ pub struct Daemon {
     fresh: Vec<f32>,
     pcm: Vec<u8>,
     utterance: Vec<f32>,
+    speech_watch: vad::SpeechWatch,
 
     session: Option<StreamingSession>,
     breaker: Breaker,
@@ -238,6 +255,7 @@ impl Daemon {
             fresh: Vec::with_capacity(8_192),
             pcm: Vec::with_capacity(STREAM_CHUNK_BYTES * 2),
             utterance: Vec::new(),
+            speech_watch: vad::SpeechWatch::new(),
             session: None,
             breaker: Breaker::default(),
             history,
@@ -255,8 +273,21 @@ impl Daemon {
     /// because macOS only applies them to the hotkey listener of a freshly started process.
     pub fn run(mut self, signals: Receiver<Signal>) -> Result<Exit> {
         let mut awaiting_permissions = !macos::permissions_granted();
+        let mut last_probe = Instant::now();
+        let mut probe: Option<std::process::Child> = None;
         if awaiting_permissions {
-            warn!("waiting for permissions. {}", macos::PERMISSIONS_HELP);
+            let mut missing = Vec::new();
+            if !macos::accessibility_trusted() {
+                missing.push("Accessibility");
+            }
+            if !macos::input_monitoring_granted() {
+                missing.push("Input Monitoring");
+            }
+            warn!(
+                "waiting for permissions (missing: {}). {}",
+                missing.join(", "),
+                macos::PERMISSIONS_HELP
+            );
             macos::request_missing_permissions();
             self.hud
                 .alert("Allow Wispr in Accessibility & Input Monitoring");
@@ -276,7 +307,28 @@ impl Daemon {
                 Err(RecvTimeoutError::Timeout) => {}
             }
             self.tick();
-            if awaiting_permissions && idle && macos::permissions_granted() {
+            if !awaiting_permissions {
+                continue;
+            }
+            let probe_says_granted = match probe.as_mut().map(std::process::Child::try_wait) {
+                Some(Ok(Some(status))) => {
+                    probe = None;
+                    status.success()
+                }
+                Some(Ok(None)) => false,
+                Some(Err(_)) => {
+                    probe = None;
+                    false
+                }
+                None => {
+                    if last_probe.elapsed() >= PERMISSION_PROBE_INTERVAL {
+                        last_probe = Instant::now();
+                        probe = spawn_permission_probe();
+                    }
+                    false
+                }
+            };
+            if idle && (probe_says_granted || macos::permissions_granted()) {
                 info!("permissions granted; restarting to activate the hotkey");
                 return Ok(Exit::Restart);
             }
@@ -292,7 +344,16 @@ impl Daemon {
                 t.elapsed() > Duration::from_secs(self.cfg.transcription.max_recording_seconds)
             });
             let mic_lost = self.mic.as_ref().is_some_and(Microphone::has_failed);
-            if too_long {
+            let timeout = self.cfg.audio.no_speech_timeout_seconds;
+            let no_speech = timeout > 0
+                && !self.speech_watch.heard()
+                && self
+                    .recording_since
+                    .is_some_and(|t| t.elapsed() > Duration::from_secs(timeout));
+            if no_speech {
+                info!("no speech for {timeout}s; cancelling");
+                self.dispatch(Event::NoSpeechTimeout);
+            } else if too_long {
                 info!("maximum recording length reached; finishing");
                 self.dispatch(Event::ForceStop);
             } else if mic_lost {
@@ -414,6 +475,9 @@ impl Daemon {
         self.mic_idle_since = None;
         self.utterance.clear();
         self.pcm.clear();
+        self.speech_watch = vad::SpeechWatch::new();
+        // A notice from an earlier dictation that never reached injection must not leak into this one.
+        self.notice_after_inject = None;
         self.session = match &self.deepgram {
             Some(opts) if self.breaker.allows(Instant::now()) => {
                 Some(StreamingSession::start(opts.clone()))
@@ -462,6 +526,7 @@ impl Daemon {
         }
         self.utterance.extend_from_slice(&self.fresh);
         self.hud.level(&self.fresh);
+        self.speech_watch.feed(&self.fresh);
         if let Some(session) = &self.session {
             f32_to_pcm16(&self.fresh, &mut self.pcm);
             if self.pcm.len() >= STREAM_CHUNK_BYTES {

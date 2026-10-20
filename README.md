@@ -321,6 +321,8 @@ example `release->text 310 ms (transcribe 214 ms, ...)`.
 | Permissions are asked again after an update | Expected: a new build is a new binary to macOS. Allow it again. If Wispr is listed but doesn't respond, remove it with `−` and add `~/Applications/Wispr.app` back |
 | `wispr is already running` | Another copy is still running. Run `wisprctl stop`. If `pgrep -fl Wispr.app` still shows a copy, end it with `kill <pid>` |
 | Text goes to the clipboard instead of being typed | A password field had focus (secure input). Paste it yourself with ⌘V |
+| Text lands in the wrong app when using `Fn` | Some apps grab focus when `Fn` is pressed (seen with Antigravity IDE, even with Wispr stopped). Remove that app's `Fn` binding or choose another `hotkey.key` |
+| Granted permissions but Wispr still waits | Wispr re-checks every 2 s in a fresh process and restarts itself. If it doesn't within ~5 s, run `wisprctl restart` |
 
 Logs: `wisprctl logs -f`. Full self-check: `wispr --check-hardware`.
 
@@ -328,7 +330,7 @@ Logs: `wisprctl logs -f`. Full self-check: `wispr --check-hardware`.
 
 ```bash
 cargo build --release          # also compiles the Swift overlay (needs swiftc)
-cargo test                     # 74 tests
+cargo test                     # 76 tests
 cargo clippy --all-targets     # keep it at zero warnings
 cargo fmt
 

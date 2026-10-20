@@ -53,6 +53,8 @@ enum Mode {
     Transcribe(PathBuf),
     Help,
     Version,
+    /// Internal: exit 0 if Accessibility and Input Monitoring are granted (see daemon.rs).
+    PermissionProbe,
 }
 
 struct Args {
@@ -103,6 +105,7 @@ fn parse_args() -> Result<Args> {
                     .ok_or_else(|| anyhow!("--transcribe needs a WAV file"))?;
                 set(Mode::Transcribe(PathBuf::from(p)), &mut out.command)?;
             }
+            "--permission-probe" => set(Mode::PermissionProbe, &mut out.command)?,
             "-h" | "--help" => set(Mode::Help, &mut out.command)?,
             "-V" | "--version" => set(Mode::Version, &mut out.command)?,
             other => bail!("unknown argument {other:?} (see --help)"),
@@ -133,6 +136,13 @@ fn real_main() -> Result<()> {
             Ok(())
         }
         Mode::ListDevices => list_devices(),
+        Mode::PermissionProbe => {
+            if macos::permissions_granted() {
+                Ok(())
+            } else {
+                std::process::exit(1)
+            }
+        }
         command => {
             let cfg = Config::load(args.config.as_deref())?;
             match command {
@@ -141,7 +151,9 @@ fn real_main() -> Result<()> {
                 Mode::Download(names) => download_models(&cfg, &names),
                 Mode::Benchmark => benchmark(&cfg),
                 Mode::Transcribe(path) => transcribe_file(&cfg, &path),
-                Mode::Help | Mode::Version | Mode::ListDevices => unreachable!(),
+                Mode::Help | Mode::Version | Mode::ListDevices | Mode::PermissionProbe => {
+                    unreachable!()
+                }
             }
         }
     }
@@ -346,6 +358,8 @@ fn check_hardware(cfg: &Config) -> Result<()> {
     println!("\nPermissions");
     println!("  accessibility  {}", ok(macos::accessibility_trusted()));
     println!("  input monitor  {}", ok(macos::input_monitoring_granted()));
+    let front = wispr::context::frontmost_app();
+    println!("  front app      {} ({:?})", front.name, front.class);
     println!(
         "  secure input   {}",
         if macos::secure_input_enabled() {

@@ -191,3 +191,20 @@ fn terminal_toggle_works_in_hold_mode() {
         vec![Action::StopRecording, Action::ShowProcessing]
     );
 }
+
+#[test]
+fn no_speech_timeout_discards_and_alerts() {
+    for mode in [HotkeyMode::Toggle, HotkeyMode::Hold] {
+        let mut m = Machine::new(mode);
+        m.handle(Event::HotkeyPress);
+        assert_eq!(
+            m.handle(Event::NoSpeechTimeout),
+            vec![
+                Action::DiscardRecording,
+                Action::Alert("No speech detected")
+            ]
+        );
+        assert_eq!(m.state(), State::Idle);
+        assert_eq!(m.handle(Event::HotkeyRelease), vec![]);
+    }
+}
